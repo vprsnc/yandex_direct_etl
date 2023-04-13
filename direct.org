@@ -236,7 +236,7 @@ def send_stats(account):
         f"dw_report_{account}")
     try:
         jobdel = client.delete_table(table_ref)
-        logger.info(jobdel.result())
+        # logger.info(jobdel.result())
     except NotFound:
         pass
     jobcre = client.create_table(table_ref)
