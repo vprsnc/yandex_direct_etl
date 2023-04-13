@@ -235,12 +235,10 @@ def send_stats(account):
     table_ref = client.dataset("yandex_oddjob").table(
         f"dw_report_{account}")
     try:
-        jobdel = client.delete_table(table_ref)
-        logger.info(jobdel.result())
+        client.delete_table(table_ref)
     except NotFound:
         pass
     client.create_table(table_ref)
-    # logger.info(jobcre.result())
     job = client.load_table_from_dataframe(df, table_ref)
     logger.success(job.result())
 #+end_src
