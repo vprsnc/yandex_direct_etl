@@ -233,8 +233,9 @@ def send_stats(account):
     df = pd.read_csv(f"tmp_data/{account}.tsv", delimiter="\t")
     table_ref = client.dataset("yandex_oddjob").table(
         f"dw_report_{account}")
+    jobdel = client.delete_table(table_ref)
+    logger.info(jobdel.result())
     job = client.load_table_from_dataframe(df, table_ref)
-
     logger.success(job.result())
 #+end_src
 
