@@ -1,0 +1,5 @@
+setup.py
+__pycache__
+tokens/
+logs
+tmp_data/

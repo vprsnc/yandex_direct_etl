@@ -1,0 +1,292 @@
+#+title: Direct
+
+#+begin_src emacs-lisp :results none
+(add-to-list 'org-structure-template-alist '("yy" . "src jupyter-python :session localhost :kernel yandex"))
+
+(add-to-list 'org-structure-template-alist '("yyr" . "src jupyter-python :session localhost :kernel yandex :results none"))
+
+(add-to-list 'org-structure-template-alist '("yyt" . "src jupyter-python :session localhost :kernel yandex :results none :tangle etl.py"))
+#+end_src
+
+* Getting
+** Imports
+
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle direct.py
+import requests
+import json
+from datetime import date
+
+from time import sleep
+from loguru import logger
+
+ConnectionError = requests.exceptions.ConnectionError
+#+end_src
+
+** Request params
+*** Reports url
+
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle direct.py
+reportsURL = "https://api.direct.yandex.com/json/v5/reports"
+#+end_src
+
+*** Today
+
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle direct.py
+today = str(date.today())
+#+end_src
+
+*** Encoding
+
+First, let's define a small function to check the encoding:
+
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle direct.py
+def u(x):
+    if type(x) == type(b''):
+        return x.decode('utf8')
+    else:
+        return x
+#+end_src
+
+*** Header
+
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle direct.py
+def build_headers(access_token):
+    headers = {
+        "Authorization": "Bearer " + access_token,
+        # "Client-Login": CLIENT_LOGIN, # NOTE Only needed if you're an agency
+        # NOTE Language of the feedback messages
+        "Accept-Language": "ru",
+        "processingMode": "auto",
+        # NOTE Don't return row with no. of rows in the end of the report
+        "skipReportSummary": "true"
+    }
+
+    return headers
+#+end_src
+
+*** Body
+
+#+begin_src jupyter-python :session localhost :kernel yandex :results none  :tangle direct.py
+def build_body():
+    body = {
+        "params": {
+            "SelectionCriteria": {
+                "DateFrom": "2022-08-27",
+                "DateTo": f"{today}" 
+            },
+            "FieldNames": [
+                "Date",
+                "CampaignName",
+                "CampaignUrlPath",
+                "LocationOfPresenceName",
+                "Impressions",
+                "Clicks",
+                "Cost"
+            ],
+            "ReportName": f"{today}",
+            "ReportType": "CAMPAIGN_PERFORMANCE_REPORT",
+            "DateRangeType": "CUSTOM_DATE",
+            "Format": "TSV",
+            "IncludeVAT": "NO",
+            "IncludeDiscount": "NO"
+        }
+    }
+
+    body = json.dumps(body, indent=4)
+    return body
+#+end_src
+
+** Requesting
+
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle direct.py
+def get_req(headers, body):
+    while True:
+        try:
+            req = requests.post(reportsURL, body, headers=headers)
+            req.encoding = 'utf-8'  # Принудительная обработка ответа в кодировке UTF-8
+
+            if req.status_code == 400:
+                logger.critical("Параметры запроса указаны неверно или достигнут лимит отчетов в очереди")
+                logger.critical("RequestId: {}".format(req.headers.get("RequestId", False)))
+                logger.critical("JSON-код запроса: {}".format(u(body)))
+                logger.critical("JSON-код ответа сервера: \n{}".format(u(req.json())))
+                return None
+                break
+
+            elif req.status_code == 200:
+                logger.success("Отчет создан успешно")
+                logger.success("RequestId: {}".format(req.headers.get("RequestId", False)))
+                # logger.success("Содержание отчета: \n{}".format(u(req.text)))
+                return req
+                break
+
+            elif req.status_code == 201:
+                logger.info("Отчет успешно поставлен в очередь в режиме офлайн")
+                retryIn = int(req.headers.get("retryIn", 60))
+                logger.info("Повторная отправка запроса через {} секунд".format(retryIn))
+                logger.info("RequestId: {}".format(req.headers.get("RequestId", False)))
+                sleep(retryIn)
+
+            elif req.status_code == 202:
+                logger.info("Отчет формируется в режиме офлайн")
+                retryIn = int(req.headers.get("retryIn", 60))
+                logger.info("Повторная отправка запроса через {} секунд".format(retryIn))
+                logger.info("RequestId:  {}".format(req.headers.get("RequestId", False)))
+                sleep(retryIn)
+
+            elif req.status_code == 500:
+                logger.critical("При формировании отчета произошла ошибка. Пожалуйста, попробуйте повторить запрос позднее")
+                logger.critical("RequestId: {}".format(req.headers.get("RequestId", False)))
+                logger.critical("JSON-код ответа сервера: \n{}".format(u(req.json())))
+                return None
+                break
+
+            elif req.status_code == 502:
+                logger.critical("Время формирования отчета превысило серверное ограничение.")
+                logger.critical("Пожалуйста, попробуйте изменить параметры запроса - уменьшить период и количество запрашиваемых данных.")
+                logger.critical("JSON-код запроса: {}".format(body))
+                print("RequestId: {}".format(req.headers.get("RequestId", False)))
+                logger.critical("JSON-код ответа сервера: \n{}".format(u(req.json())))
+                return None
+                break
+
+            else:
+                logger.critical("Произошла непредвиденная ошибка")
+                logger.critical("RequestId:  {}".format(req.headers.get("RequestId", False)))
+                logger.critical("JSON-код запроса: {}".format(body))
+                logger.critical("JSON-код ответа сервера: \n{}".format(u(req.json())))
+                return None
+                break
+
+            # Обработка ошибки, если не удалось соединиться с сервером API Директа
+        except ConnectionError:
+            # В данном случае мы рекомендуем повторить запрос позднее
+            logger.critical("Произошла ошибка соединения с сервером API")
+            # Принудительный выход из цикла
+            return None
+            break
+
+        # Если возникла какая-либо другая ошибка
+        except:
+            # В данном случае мы рекомендуем проанализировать действия приложения
+            logger.critical("Произошла непредвиденная ошибка")
+            # Принудительный выход из цикла
+            return None
+            break
+#+end_src
+
+** Writing temp file
+#+begin_src jupyter-python :session localhost :kernel yandex :tangle direct.py :results none
+def write_req(req, account):
+    with open(f"tmp_data/{account}.tsv", "w", encoding="utf-8") as f:
+        f.write(req.text)
+#+end_src
+
+First line of the output file contains the name of the report.
+Let's just remove it to get a nive tsv.
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle direct.py
+    with open(f'tmp_data/{account}.tsv', 'r') as fin:
+        data = fin.read().splitlines(True)
+    with open(f'tmp_data/{account}.tsv', 'w') as fout:
+        fout.writelines(data[1:])
+#+end_src
+
+** Main
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle direct.py
+def get_stats(account, access_token):
+    headers = build_headers(access_token)
+    body = build_body()
+    req = get_req(headers, body)
+
+    if req:
+        write_req(req, account)
+
+    else:
+        logger.critical("Something went wrong!")
+
+#+end_src
+
+* Sending
+** Imports
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle sender.py
+import os
+import pandas as pd
+
+from google.cloud import bigquery as bq
+from google.api_core.exceptions import BadRequest
+from loguru import logger
+#+end_src
+
+** Logging in
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle sender.py
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = \
+     './tokens/oddjob-db-2007-759fe782b144.json'
+#+end_src
+
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle sender.py
+client = bq.Client()
+#+end_src
+
+** Loading
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle sender.py
+def send_stats(account):
+    df = pd.read_csv(f"tmp_data/{account}.tsv", delimiter="\t")
+    table_ref = client.dataset("yandex_oddjob").table(
+        f"dw_report_{account}")
+    job = client.load_table_from_dataframe(df, table_ref)
+
+    logger.success(job.result())
+#+end_src
+
+#+RESULTS:
+: LoadJob<project=oddjob-db-2007, location=US, id=72613168-1a86-487e-af3e-da73cdb2a653>
+
+* e17067601
+** Imports
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle e17067601.py
+from loguru import logger
+from setup import e17067601_TOKEN
+from direct import get_stats
+from sender import send_stats
+#+end_src
+
+** Acc
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle e17067601.py
+ACC = "e17067601"
+#+end_src
+
+** Logging
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle e17067601.py
+logger.add(f"logs/{ACC}.log", level="DEBUG")
+#+end_src
+
+** Main
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle e17067601.py
+get_stats(ACC, e17067601_TOKEN)
+send_stats(ACC)
+#+end_src
+
+* 17154444
+** Imports
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle e17154444.py
+from loguru import logger
+from setup import e17154444_TOKEN
+from direct import get_stats
+from sender import send_stats
+#+end_src
+
+** Acc
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle e17154444.py
+ACC = "e17154444"
+#+end_src
+
+** Logging
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle e17154444.py
+logger.add(f"logs/{ACC}.log", level="DEBUG")
+#+end_src
+
+** Main
+#+begin_src jupyter-python :session localhost :kernel yandex :results none :tangle e17154444.py
+get_stats(ACC, e17154444_TOKEN)
+send_stats(ACC)
+#+end_src
