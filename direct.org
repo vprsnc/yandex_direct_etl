@@ -235,6 +235,8 @@ def send_stats(account):
         f"dw_report_{account}")
     jobdel = client.delete_table(table_ref)
     logger.info(jobdel.result())
+    jobcre = client.create_table(table_ref)
+    logger.info(jobcre.result())
     job = client.load_table_from_dataframe(df, table_ref)
     logger.success(job.result())
 #+end_src
